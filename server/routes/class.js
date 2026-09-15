@@ -10,6 +10,10 @@ const { sendAttendanceEmail, sendClassJoinEmail } = require('../utils/email.js')
 const mongoose = require('mongoose');
 const axios = require('axios');
 const FormData = require('form-data');
+const { Client, handle_file } = require('@gradio/client');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 const PYTHON_API_URL = process.env.PYTHON_API_URL || 'http://127.0.0.1:7860';
 
 function cosineSimilarity(vecA, vecB) {
@@ -676,16 +680,24 @@ router.post('/face/register', auth, async (req, res) => {
                 const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
                 const buffer = Buffer.from(base64Data, 'base64');
 
-                const form = new FormData();
-                form.append('image', buffer, { filename: 'face.jpg', contentType: 'image/jpeg' });
+                const tempFilePath = path.join(os.tmpdir(), `register_${Date.now()}.jpg`);
+                fs.writeFileSync(tempFilePath, buffer);
 
-                const pythonResponse = await axios.post(`${PYTHON_API_URL}/api/extract`, form, {
-                    headers: { ...form.getHeaders() }
-                });
+                // Call Python API using Gradio Client
+                let pythonResponseData = { status: "error", faces: [] };
+                try {
+                    const client = await Client.connect(PYTHON_API_URL);
+                    const result = await client.predict("/predict", { 
+                        image_filepath: handle_file(tempFilePath), 
+                    });
+                    pythonResponseData = JSON.parse(result.data[0]);
+                } finally {
+                    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+                }
 
-                if (pythonResponse.data.status === 'success' && pythonResponse.data.faces.length > 0) {
+                if (pythonResponseData.status === 'success' && pythonResponseData.faces.length > 0) {
                     // Save ArcFace embedding (512 floats)
-                    user.deepfaceDescriptor = pythonResponse.data.faces[0].embedding;
+                    user.deepfaceDescriptor = pythonResponseData.faces[0].embedding;
                 }
             } catch (pythonErr) {
                 console.error("Python API Error during registration:", pythonErr.message);
@@ -733,19 +745,26 @@ router.post('/recognize-photo', auth, async (req, res) => {
         // Prepare image for Python API
         const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Data, 'base64');
-        const form = new FormData();
-        form.append('image', buffer, { filename: 'query.jpg', contentType: 'image/jpeg' });
+        const tempFilePath = path.join(os.tmpdir(), `query_${Date.now()}.jpg`);
+        fs.writeFileSync(tempFilePath, buffer);
 
-        // Call Python API
-        const pythonResponse = await axios.post(`${PYTHON_API_URL}/api/extract`, form, {
-            headers: { ...form.getHeaders() }
-        });
+        // Call Python API using Gradio Client
+        let pythonResponseData = { status: "error", faces: [] };
+        try {
+            const client = await Client.connect(PYTHON_API_URL);
+            const result = await client.predict("/predict", { 
+                image_filepath: handle_file(tempFilePath), 
+            });
+            pythonResponseData = JSON.parse(result.data[0]);
+        } finally {
+            if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+        }
 
-        if (pythonResponse.data.status !== 'success' || !pythonResponse.data.faces) {
+        if (pythonResponseData.status !== 'success' || !pythonResponseData.faces) {
             return res.json({ matchedStudentIds: [], detectedFaces: 0 });
         }
 
-        const detectedFaces = pythonResponse.data.faces;
+        const detectedFaces = pythonResponseData.faces;
         const matchedStudentIds = [];
 
             // For each detected face, find the best matching student
