@@ -687,7 +687,7 @@ router.post('/face/register', auth, async (req, res) => {
                 let pythonResponseData = { status: "error", faces: [] };
                 try {
                     const client = await Client.connect(PYTHON_API_URL);
-                    const result = await client.predict("/predict", { 
+                    const result = await client.predict("/extract_faces", { 
                         image_filepath: handle_file(tempFilePath), 
                     });
                     pythonResponseData = JSON.parse(result.data[0]);
@@ -752,7 +752,7 @@ router.post('/recognize-photo', auth, async (req, res) => {
         let pythonResponseData = { status: "error", faces: [] };
         try {
             const client = await Client.connect(PYTHON_API_URL);
-            const result = await client.predict("/predict", { 
+            const result = await client.predict("/extract_faces", { 
                 image_filepath: handle_file(tempFilePath), 
             });
             pythonResponseData = JSON.parse(result.data[0]);
