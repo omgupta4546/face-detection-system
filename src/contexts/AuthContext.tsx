@@ -1,18 +1,18 @@
-import React, { createContext, useState, useEffect, useContext, useMemo } from "react";
+import React, { createContext, useState, useEffect, useContext } from "react";
 import api from "@/lib/api";
 
 type User = {
     _id: string;
     name: string;
     email: string;
-    role: "student" | "professor" | "admin" | "super_admin";
+    role: "student" | "professor" | "admin" | "college_admin" | "super_admin";
     faceDataRegistered?: boolean;
 } | null;
 
 interface AuthContextType {
     user: User;
     loading: boolean;
-    login: (email: string, password: string) => Promise<void>;
+    login: (email: string, password: string) => Promise<any>;
     register: (userData: any) => Promise<void>;
     googleLogin: (token: string) => Promise<void>;
     logout: () => void;
@@ -57,6 +57,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const res = await api.post("/auth/login", { email, password });
         localStorage.setItem("token", res.data.token);
         setUser(res.data.user);
+        return res.data.user;
     };
 
     const register = async (userData: any) => {

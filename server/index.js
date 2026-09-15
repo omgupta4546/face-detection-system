@@ -6,12 +6,14 @@ const path = require('path');
 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
+// Standard console logging is used; Render will automatically capture stdout/stderr.
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-    origin: '*',
+    origin: process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : '*',
     credentials: true
 }));
 app.use(express.json({ limit: '50mb' }));
@@ -45,5 +47,12 @@ if (require.main === module) {
         console.log(`Server running on port ${PORT}`);
     });
 }
+
+// Global error handler (Express 5 catches async errors automatically)
+app.use((err, req, res, next) => {
+    console.error('[ERROR]', req.method, req.originalUrl, err.message);
+    console.error(err.stack);
+    res.status(err.status || 500).json({ msg: err.message || 'Internal Server Error' });
+});
 
 module.exports = app;

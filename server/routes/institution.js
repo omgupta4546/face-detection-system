@@ -80,6 +80,7 @@ router.get('/all', async (req, res) => {
         const institutions = await Institution.find().select('name code _id');
         res.json(institutions);
     } catch (err) {
+        console.error('Institution fetch error:', err);
         res.status(500).send('Server Error');
     }
 });

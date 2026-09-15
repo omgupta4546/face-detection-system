@@ -15,6 +15,7 @@ dist-ssr
 # Environment Variables
 .env
 .env.*
+server/.env
 
 # Editor directories and files
 .vscode/*
@@ -35,3 +36,27 @@ android/build/
 
 # Cordova plugins for Capacitor
 android/capacitor-cordova-android-plugins
+
+# Python virtual environments
+python-ai-service/venv/
+python-ai-service/venv2/
+python-ai-service/venv3/
+__pycache__/
+*.pyc
+
+# Temp and build error files
+build_err*.txt
+build_out.txt
+build_error.txt
+build_final.txt
+build_test*.txt
+server_err.txt
+server_out.txt
+server_output.txt
+curl_out.txt
+eslint.json
+eslint_errors.txt
+eslint_src_errors.txt
+python-ai-service/temp_*.jpg
+python-ai-service/dummy.jpg
+face-detection-system/

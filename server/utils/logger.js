@@ -10,7 +10,7 @@ const logAction = async (action, user, target, details = {}) => {
             details
         });
         await log.save();
-        console.log(`[AUDIT] ${action} by ${user.name} on ${target}`);
+        console.log(`[AUDIT] ${action} by user:${user.id} on ${target}`);
     } catch (err) {
         console.error("Failed to create audit log:", err);
     }

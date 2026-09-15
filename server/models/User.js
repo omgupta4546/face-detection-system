@@ -16,7 +16,7 @@ const UserSchema = new mongoose.Schema({
     },
     role: {
         type: String,
-        enum: ['student', 'professor', 'college_admin', 'super_admin'],
+        enum: ['student', 'professor', 'admin', 'college_admin', 'super_admin'],
         default: 'student'
     },
     institutionId: {
@@ -38,6 +38,10 @@ const UserSchema = new mongoose.Schema({
     },
     faceDescriptor: {
         type: [Number], // Array of 128 floats
+        default: null
+    },
+    deepfaceDescriptor: {
+        type: [Number], // Array of 512 floats (ArcFace)
         default: null
     },
     googleId: {

@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+deepface
+tensorflow
+pydantic
+python-multipart
+opencv-python-headless
+tf-keras
+gradio
+numpy

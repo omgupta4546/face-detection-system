@@ -38,7 +38,7 @@ const ProtectedRoute = ({ children, allowedRoles }: { children: React.ReactNode,
 };
 
 const App = () => (
-  <GoogleOAuthProvider clientId="691174506062-ht2dp63353ti85cosg3asiv9piu2n882.apps.googleusercontent.com">
+  <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID || "691174506062-ht2dp63353ti85cosg3asiv9piu2n882.apps.googleusercontent.com"}>
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <TooltipProvider>
@@ -73,11 +73,11 @@ const App = () => (
               <Route path="/professor/settings" element={<ProtectedRoute allowedRoles={['professor']}><SettingsPage role="professor" /></ProtectedRoute>} />
 
               {/* Admin routes */}
-              <Route path="/admin" element={<ProtectedRoute allowedRoles={['admin']}><AdminDashboard /></ProtectedRoute>} />
-              <Route path="/admin/users" element={<ProtectedRoute allowedRoles={['admin']}><AdminDashboard /></ProtectedRoute>} />
-              <Route path="/admin/departments" element={<ProtectedRoute allowedRoles={['admin']}><AdminDashboard /></ProtectedRoute>} />
-              <Route path="/admin/analytics" element={<ProtectedRoute allowedRoles={['admin']}><AnalyticsPage role="admin" /></ProtectedRoute>} />
-              <Route path="/admin/settings" element={<ProtectedRoute allowedRoles={['admin']}><SettingsPage role="admin" /></ProtectedRoute>} />
+              <Route path="/admin" element={<ProtectedRoute allowedRoles={['admin', 'college_admin']}><AdminDashboard /></ProtectedRoute>} />
+              <Route path="/admin/users" element={<ProtectedRoute allowedRoles={['admin', 'college_admin']}><AdminDashboard /></ProtectedRoute>} />
+              <Route path="/admin/departments" element={<ProtectedRoute allowedRoles={['admin', 'college_admin']}><AdminDashboard /></ProtectedRoute>} />
+              <Route path="/admin/analytics" element={<ProtectedRoute allowedRoles={['admin', 'college_admin']}><AnalyticsPage role="admin" /></ProtectedRoute>} />
+              <Route path="/admin/settings" element={<ProtectedRoute allowedRoles={['admin', 'college_admin']}><SettingsPage role="admin" /></ProtectedRoute>} />
 
               {/* Super Admin routes */}
               <Route path="/super-admin" element={<ProtectedRoute allowedRoles={['super_admin']}><SuperAdminDashboard /></ProtectedRoute>} />

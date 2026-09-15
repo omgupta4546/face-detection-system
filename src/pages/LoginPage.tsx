@@ -36,20 +36,23 @@ const LoginPage = () => {
     const name = formData.get("name") as string;
 
     try {
+      let actualRole = role; // Default for signup
       if (isSignUp) {
         await register({ name, email, password, role });
       } else {
-        await login(email, password);
+        const userData = await login(email, password);
+        actualRole = userData?.role || role;
       }
 
       const paths: Record<string, string> = {
         student: "/student",
         professor: "/professor",
         admin: "/admin",
+        college_admin: "/admin",
         "super_admin": "/super-admin",
         "super-admin": "/super-admin",
       };
-      navigate(paths[role] || "/student");
+      navigate(paths[actualRole] || "/student");
     } catch (error: any) {
       toast({
         title: "Authentication Failed",

@@ -4,7 +4,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import DashboardLayout from "@/components/DashboardLayout";
 import AnimatedPage, { staggerContainer, fadeInUp } from "@/components/AnimatedPage";
 import { motion } from "framer-motion";
-import { Camera, CheckCircle2, XCircle, RefreshCw, Scan, Search, Users, AlertTriangle, Save, Upload, FlipHorizontal } from "lucide-react";
+import { Camera, CheckCircle2, XCircle, RefreshCw, Scan, Search, Users, AlertTriangle, Save, Upload, FlipHorizontal, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -71,7 +71,8 @@ const TakeAttendancePage = () => {
           .map((s: any) => new faceapi.LabeledFaceDescriptors(s._id.toString(), [new Float32Array(s.faceDescriptor)]));
 
         if (labeledDescriptors.length > 0) {
-          setMatcher(new faceapi.FaceMatcher(labeledDescriptors, 0.7));
+          // Relaxed threshold to 0.55 to allow matches for smaller/blurry faces in group photos
+          setMatcher(new faceapi.FaceMatcher(labeledDescriptors, 0.55));
         } else {
           setMatcher(null);
         }
@@ -110,23 +111,18 @@ const TakeAttendancePage = () => {
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (isScanning && useAI && matcher && modelLoaded) {
-      matchCountsRef.current = {}; // Reset counts on start
-      if (!videoRef.current?.srcObject) {
-        navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode } })
-          .then(stream => {
-            if (videoRef.current) videoRef.current.srcObject = stream;
-          })
-          .catch(err => console.error("Camera error:", err));
-      }
+    let cancelled = false;
 
+    const startDetectionLoop = () => {
+      if (cancelled) return;
       interval = setInterval(async () => {
         if (isProcessingRef.current) return; // Prevent queueing up heavy processes
 
-        if (videoRef.current && canvasRef.current && !videoRef.current.paused) {
+        if (videoRef.current && canvasRef.current && !videoRef.current.paused && videoRef.current.readyState >= 2) {
           try {
             isProcessingRef.current = true;
-            const detections = await faceapi.detectAllFaces(videoRef.current, new faceapi.TinyFaceDetectorOptions({ inputSize: 608, scoreThreshold: 0.25 }))
+            // Increased scoreThreshold from 0.25 to 0.5 to avoid detecting non-faces
+            const detections = await faceapi.detectAllFaces(videoRef.current, new faceapi.TinyFaceDetectorOptions({ inputSize: 608, scoreThreshold: 0.5 }))
               .withFaceLandmarks()
               .withFaceDescriptors();
 
@@ -169,6 +165,43 @@ const TakeAttendancePage = () => {
           }
         }
       }, 500); // 2 FPS again, thanks to TinyFaceDetector speed!
+    };
+
+    if (isScanning && useAI && matcher && modelLoaded) {
+      matchCountsRef.current = {}; // Reset counts on start
+
+      // Always stop any existing stream first, then request a fresh one
+      if (videoRef.current?.srcObject) {
+        const oldStream = videoRef.current.srcObject as MediaStream;
+        oldStream.getTracks().forEach(track => track.stop());
+        videoRef.current.srcObject = null;
+      }
+
+      navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode } })
+        .then(stream => {
+          if (cancelled) {
+            stream.getTracks().forEach(track => track.stop());
+            return;
+          }
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+            // Wait for the video to actually start playing before running detection
+            const onPlaying = () => {
+              videoRef.current?.removeEventListener('playing', onPlaying);
+              startDetectionLoop();
+            };
+            // If the video is already playing (unlikely but possible), start immediately
+            if (videoRef.current.readyState >= 2 && !videoRef.current.paused) {
+              startDetectionLoop();
+            } else {
+              videoRef.current.addEventListener('playing', onPlaying);
+            }
+          }
+        })
+        .catch(err => {
+          console.error("Camera error:", err);
+          toast({ title: "Camera Error", description: "Could not access the camera. Please allow camera permissions.", variant: "destructive" });
+        });
     } else {
       if (videoRef.current?.srcObject) {
         const stream = videoRef.current.srcObject as MediaStream;
@@ -176,8 +209,11 @@ const TakeAttendancePage = () => {
         videoRef.current.srcObject = null;
       }
     }
-    return () => clearInterval(interval);
-  }, [isScanning, useAI, matcher, modelLoaded]);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isScanning, useAI, matcher, modelLoaded, facingMode]);
 
   const switchCamera = () => {
     // Stop current stream tracks
@@ -226,50 +262,49 @@ const TakeAttendancePage = () => {
   };
 
   const processUploadedImage = async () => {
-    if (!imageRef.current || !canvasRef.current || !matcher) return;
+    if (!classCode) return;
+    const imgData = uploadedImages[currentImageIndex];
+    if (!imgData) return;
 
-    const img = imageRef.current;
-
-    // Wait for image to fully render its dimensions
-    if (img.width === 0) {
-      setTimeout(processUploadedImage, 100);
-      return;
+    // Clear canvas if it exists since we won't draw boxes for backend AI
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
     }
 
     try {
-      const detections = await faceapi.detectAllFaces(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.45 }))
-        .withFaceLandmarks()
-        .withFaceDescriptors();
+      toast({ title: `Scanning Photo (${currentImageIndex + 1}/${uploadedImages.length})...`, description: "DeepFace AI is processing the image." });
 
-      const displaySize = { width: img.width, height: img.height };
-      faceapi.matchDimensions(canvasRef.current, displaySize);
-
-      const resizedDetections = faceapi.resizeResults(detections, displaySize);
-      const ctx = canvasRef.current.getContext('2d');
-      if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-
-      const results = resizedDetections.map(d => matcher.findBestMatch(d.descriptor));
-
-      let matchedCount = 0;
-      results.forEach((result, i) => {
-        const box = resizedDetections[i].detection.box;
-        const drawBox = new faceapi.draw.DrawBox(box, { label: result.toString() });
-        if (canvasRef.current) drawBox.draw(canvasRef.current);
-
-        if (result.label !== 'unknown') {
-          matchedCount++;
-          setPresentIds(prev => {
-            const newSet = new Set(prev);
-            newSet.add(result.label);
-            return newSet;
-          });
-        }
+      const res = await api.post('/classes/recognize-photo', {
+        classCode,
+        image: imgData
       });
 
-      toast({ title: "Scan Complete", description: `Found ${detections.length} faces, matched ${matchedCount} students.` });
+      const { matchedStudentIds, detectedFaces } = res.data;
+
+      if (matchedStudentIds && matchedStudentIds.length > 0) {
+        setPresentIds(prev => {
+          const newSet = new Set(prev);
+          matchedStudentIds.forEach((id: string) => newSet.add(id));
+          return newSet;
+        });
+      }
+
+      toast({ title: `Scan Complete (${currentImageIndex + 1}/${uploadedImages.length})`, description: `Found ${detectedFaces} faces, matched ${matchedStudentIds ? matchedStudentIds.length : 0} students.` });
+
+      // Auto-advance to the next photo after a short delay
+      if (currentImageIndex < uploadedImages.length - 1) {
+        setTimeout(() => {
+          setCurrentImageIndex(prev => prev + 1);
+        }, 1500); // 1.5 seconds delay
+      } else if (uploadedImages.length > 1) {
+        setTimeout(() => {
+          toast({ title: "All Photos Scanned", description: "All uploaded photos have been processed successfully." });
+        }, 1500);
+      }
     } catch (err) {
       console.error(err);
-      toast({ title: "Scan Error", description: "Failed to process image.", variant: "destructive" });
+      toast({ title: "Scan Error", description: "Failed to process image with DeepFace API.", variant: "destructive" });
     }
   };
 
@@ -414,10 +449,28 @@ const TakeAttendancePage = () => {
                           </Button>
                         </div>
                         {uploadedImages.length > 1 && (
-                          <div className="absolute bottom-4 left-0 right-0 flex justify-center">
+                          <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-3 items-center">
+                            <Button 
+                              size="sm" 
+                              variant="secondary" 
+                              className="rounded-full h-8 w-8 p-0 border border-border shadow-md"
+                              onClick={() => setCurrentImageIndex(prev => Math.max(0, prev - 1))}
+                              disabled={currentImageIndex === 0}
+                            >
+                              <ChevronLeft className="h-4 w-4" />
+                            </Button>
                             <Badge className="bg-background/80 backdrop-blur-md text-foreground border-border shadow-lg text-sm px-4 py-1.5">
                               Photo {currentImageIndex + 1} of {uploadedImages.length}
                             </Badge>
+                            <Button 
+                              size="sm" 
+                              variant="secondary" 
+                              className="rounded-full h-8 w-8 p-0 border border-border shadow-md"
+                              onClick={() => setCurrentImageIndex(prev => Math.min(uploadedImages.length - 1, prev + 1))}
+                              disabled={currentImageIndex === uploadedImages.length - 1}
+                            >
+                              <ChevronRight className="h-4 w-4" />
+                            </Button>
                           </div>
                         )}
                       </div>

@@ -1,4 +1,4 @@
-import { ReactNode, useState } from "react";
+import { ReactNode, useState, useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Users, BookOpen, BarChart3, Bell, Settings, LogOut,
@@ -12,6 +12,7 @@ import {
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { motion, AnimatePresence } from "framer-motion";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface NavItem {
   title: string;
@@ -26,7 +27,7 @@ const roleNavItems: Record<string, NavItem[]> = {
     { title: "Classroom", href: "/student/classroom", icon: BookOpen },
     { title: "Attendance", href: "/student/attendance", icon: Calendar },
     { title: "Courses", href: "/student/courses", icon: FileText },
-    { title: "Notifications", href: "/student/notifications", icon: Bell, badge: 3 },
+    { title: "Notifications", href: "/student/notifications", icon: Bell },
   ],
   professor: [
     { title: "Dashboard", href: "/professor", icon: LayoutDashboard },
@@ -34,7 +35,7 @@ const roleNavItems: Record<string, NavItem[]> = {
     { title: "Attendance", href: "/professor/attendance", icon: Camera },
     { title: "Reports", href: "/professor/reports", icon: FileText },
     { title: "Analytics", href: "/professor/analytics", icon: BarChart3 },
-    { title: "Alerts", href: "/professor/notifications", icon: Bell, badge: 5 },
+    { title: "Alerts", href: "/professor/notifications", icon: Bell },
   ],
   admin: [
     { title: "Dashboard", href: "/admin", icon: LayoutDashboard },
@@ -73,13 +74,6 @@ const roleBadgeColors: Record<string, string> = {
   "super-admin": "bg-info/15 text-info border-info/20",
 };
 
-const mockUsers: Record<string, { name: string; email: string; avatar: string }> = {
-  student: { name: "Alex Johnson", email: "alex@university.edu", avatar: "AJ" },
-  professor: { name: "Dr. Sarah Chen", email: "s.chen@university.edu", avatar: "SC" },
-  admin: { name: "Michael Torres", email: "m.torres@university.edu", avatar: "MT" },
-  "super-admin": { name: "Platform Admin", email: "admin@smartclass.io", avatar: "PA" },
-};
-
 interface DashboardLayoutProps {
   children: ReactNode;
   role: string;
@@ -88,9 +82,40 @@ interface DashboardLayoutProps {
 const DashboardLayout = ({ children, role }: DashboardLayoutProps) => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { user: authUser, logout, api } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const navItems = roleNavItems[role] || [];
-  const user = mockUsers[role];
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // Fetch real unread notification count
+  useEffect(() => {
+    const fetchUnread = async () => {
+      try {
+        const res = await api.get('/notifications');
+        const unread = res.data.filter((n: any) => !n.isRead).length;
+        setUnreadCount(unread);
+      } catch (err) {
+        // Silently fail — notifications are non-critical
+      }
+    };
+    fetchUnread();
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchUnread, 30000);
+    return () => clearInterval(interval);
+  }, [api]);
+
+  // Build nav items with real badge count for notification/alerts links
+  const navItems = (roleNavItems[role] || []).map(item => {
+    if (item.title === 'Notifications' || item.title === 'Alerts') {
+      return { ...item, badge: unreadCount > 0 ? unreadCount : undefined };
+    }
+    return item;
+  });
+
+  // Use real user data, with fallback
+  const displayName = authUser?.name || "User";
+  const displayEmail = authUser?.email || "";
+  const displayAvatar = displayName.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
+
   const bottomNavItems = navItems.slice(0, 5);
   const gradient = roleGradients[role] || "gradient-primary";
 
@@ -149,7 +174,7 @@ const DashboardLayout = ({ children, role }: DashboardLayoutProps) => {
               >
                 <item.icon className={`h-[18px] w-[18px] transition-colors ${isActive ? "text-sidebar-primary" : ""}`} />
                 <span>{item.title}</span>
-                {item.badge && (
+                {item.badge && item.badge > 0 && (
                   <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground">
                     {item.badge}
                   </span>
@@ -173,11 +198,11 @@ const DashboardLayout = ({ children, role }: DashboardLayoutProps) => {
             <DropdownMenuTrigger asChild>
               <button className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm hover:bg-sidebar-accent/50 transition-all">
                 <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${gradient} text-xs font-bold text-primary-foreground shadow-sm`}>
-                  {user.avatar}
+                  {displayAvatar}
                 </div>
                 <div className="flex-1 text-left min-w-0">
-                  <p className="font-semibold text-primary-foreground text-sm truncate">{user.name}</p>
-                  <p className="text-[11px] text-sidebar-foreground truncate">{user.email}</p>
+                  <p className="font-semibold text-primary-foreground text-sm truncate">{displayName}</p>
+                  <p className="text-[11px] text-sidebar-foreground truncate">{displayEmail}</p>
                 </div>
                 <ChevronDown className="h-4 w-4 text-sidebar-foreground shrink-0" />
               </button>
@@ -188,7 +213,7 @@ const DashboardLayout = ({ children, role }: DashboardLayoutProps) => {
                 <Settings className="mr-2 h-4 w-4" /> Settings
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => navigate("/login")} className="text-destructive rounded-lg cursor-pointer">
+              <DropdownMenuItem onClick={() => logout()} className="text-destructive rounded-lg cursor-pointer">
                 <LogOut className="mr-2 h-4 w-4" /> Sign Out
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -218,13 +243,15 @@ const DashboardLayout = ({ children, role }: DashboardLayoutProps) => {
             <Link to={`/${role}/notifications`}>
               <Button variant="ghost" size="icon" className="relative h-9 w-9 rounded-xl">
                 <Bell className="h-[18px] w-[18px]" />
-                <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-destructive-foreground ring-2 ring-card">
-                  3
-                </span>
+                {unreadCount > 0 && (
+                  <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-destructive-foreground ring-2 ring-card">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
               </Button>
             </Link>
             <div className={`lg:hidden flex h-8 w-8 items-center justify-center rounded-xl ${gradient} text-[10px] font-bold text-primary-foreground`}>
-              {user.avatar}
+              {displayAvatar}
             </div>
           </div>
         </header>
@@ -252,7 +279,7 @@ const DashboardLayout = ({ children, role }: DashboardLayoutProps) => {
                 )}
                 <item.icon className={`h-5 w-5 ${isActive ? "text-primary" : ""}`} />
                 <span>{item.title}</span>
-                {item.badge && (
+                {item.badge && item.badge > 0 && (
                   <span className="absolute -top-0.5 right-0 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-destructive px-1 text-[8px] font-bold text-destructive-foreground">
                     {item.badge}
                   </span>

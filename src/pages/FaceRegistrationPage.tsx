@@ -82,7 +82,8 @@ const FaceRegistrationPage = () => {
                 faceapi.matchDimensions(canvasRef.current, displaySize);
 
                 try {
-                    const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions({ inputSize: 608, scoreThreshold: 0.7 }))
+                    // Use SsdMobilenetv1 for higher accuracy during registration (creates better face descriptors)
+                    const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.8 }))
                         .withFaceLandmarks();
 
                     const ctx = canvasRef.current.getContext('2d');
@@ -113,7 +114,8 @@ const FaceRegistrationPage = () => {
         });
 
         try {
-            const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions({ inputSize: 608, scoreThreshold: 0.7 }))
+            // Use SsdMobilenetv1 for higher accuracy during registration (creates better face descriptors)
+            const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.8 }))
                 .withFaceLandmarks()
                 .withFaceDescriptor();
 
@@ -132,7 +134,18 @@ const FaceRegistrationPage = () => {
                 }
 
                 const descriptor = Array.from(detections.descriptor);
-                await api.post('/classes/face/register', { descriptor });
+                
+                // Capture the current video frame to send to backend for DeepFace extraction
+                const snapCanvas = document.createElement('canvas');
+                snapCanvas.width = videoWidth;
+                snapCanvas.height = videoRef.current.videoHeight || 480;
+                const ctx = snapCanvas.getContext('2d');
+                if (ctx) {
+                    ctx.drawImage(videoRef.current, 0, 0, snapCanvas.width, snapCanvas.height);
+                }
+                const imageBase64 = snapCanvas.toDataURL('image/jpeg', 0.9);
+
+                await api.post('/classes/face/register', { descriptor, image: imageBase64 });
 
                 toast({
                     title: "Success",

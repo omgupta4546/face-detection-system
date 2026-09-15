@@ -8,6 +8,23 @@ const jwt = require('jsonwebtoken');
 const logAction = require('../utils/logger.js');
 const { sendAttendanceEmail, sendClassJoinEmail } = require('../utils/email.js');
 const mongoose = require('mongoose');
+const axios = require('axios');
+const FormData = require('form-data');
+const PYTHON_API_URL = process.env.PYTHON_API_URL || 'http://127.0.0.1:7860';
+
+function cosineSimilarity(vecA, vecB) {
+    if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
+    let dotProduct = 0.0;
+    let normA = 0.0;
+    let normB = 0.0;
+    for (let i = 0; i < vecA.length; i++) {
+        dotProduct += vecA[i] * vecB[i];
+        normA += vecA[i] * vecA[i];
+        normB += vecB[i] * vecB[i];
+    }
+    if (normA === 0 || normB === 0) return 0;
+    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
 
 // Middleware to check token
 const auth = (req, res, next) => {
@@ -477,8 +494,12 @@ router.get('/summary', auth, async (req, res) => {
             const totalClassHappened = await Attendance.countDocuments({ classId: { $in: classIds } });
             const presentMySessions = await Attendance.countDocuments({
                 classId: { $in: classIds },
-                "records.student": req.user.id,
-                "records.status": "present"
+                records: {
+                    $elemMatch: {
+                        student: new mongoose.Types.ObjectId(req.user.id),
+                        status: "present"
+                    }
+                }
             });
             const globalRate = totalClassHappened === 0 ? 0 : Math.round((presentMySessions / totalClassHappened) * 100);
 
@@ -637,15 +658,46 @@ router.get('/my', auth, async (req, res) => {
 });
 
 // Save Face Descriptor
+// Save Face Descriptor
 router.post('/face/register', auth, async (req, res) => {
-    const { descriptor } = req.body;
+    const { descriptor, image } = req.body;
     try {
         const user = await User.findById(req.user.id);
-        user.faceDescriptor = descriptor;
+        
+        // Save frontend face-api.js descriptor for Live Camera
+        if (descriptor) {
+            user.faceDescriptor = descriptor;
+        }
+
+        // Send image to Python API for DeepFace embeddings
+        if (image) {
+            try {
+                // Remove data:image/jpeg;base64, from string
+                const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
+                const buffer = Buffer.from(base64Data, 'base64');
+
+                const form = new FormData();
+                form.append('image', buffer, { filename: 'face.jpg', contentType: 'image/jpeg' });
+
+                const pythonResponse = await axios.post(`${PYTHON_API_URL}/api/extract`, form, {
+                    headers: { ...form.getHeaders() }
+                });
+
+                if (pythonResponse.data.status === 'success' && pythonResponse.data.faces.length > 0) {
+                    // Save ArcFace embedding (512 floats)
+                    user.deepfaceDescriptor = pythonResponse.data.faces[0].embedding;
+                }
+            } catch (pythonErr) {
+                console.error("Python API Error during registration:", pythonErr.message);
+                // We don't fail the whole registration if python is down, we just won't have DeepFace data
+            }
+        }
+
         user.isFaceRegistered = true;
         await user.save();
-        res.json({ msg: 'Face registered' });
+        res.json({ msg: 'Face registered successfully' });
     } catch (err) {
+        console.error(err);
         res.status(500).send('Server Error');
     }
 });
@@ -653,12 +705,80 @@ router.post('/face/register', auth, async (req, res) => {
 // Get Class Students (For Attendance)
 router.get('/:classCode/students', auth, async (req, res) => {
     try {
-        const classroom = await Class.findOne({ code: req.params.classCode }).populate('students', 'name faceDescriptor isFaceRegistered universityRollNo classRollNo profilePic');
+        const classroom = await Class.findOne({ code: req.params.classCode }).populate('students', 'name faceDescriptor deepfaceDescriptor isFaceRegistered universityRollNo classRollNo profilePic');
         if (!classroom) return res.status(404).json({ msg: 'Class not found' });
 
         res.json(classroom.students);
     } catch (err) {
         res.status(500).send('Server Error');
+    }
+});
+
+// Recognize faces in a photo using Python DeepFace Microservice
+router.post('/recognize-photo', auth, async (req, res) => {
+    const { classCode, image } = req.body;
+    try {
+        if (!image) return res.status(400).json({ msg: 'No image provided' });
+
+        const classroom = await Class.findOne({ code: classCode }).populate('students', 'name deepfaceDescriptor isFaceRegistered _id');
+        if (!classroom) return res.status(404).json({ msg: 'Class not found' });
+
+        // Get all students who have deepface descriptors registered
+        const registeredStudents = classroom.students.filter(s => s.isFaceRegistered && s.deepfaceDescriptor && s.deepfaceDescriptor.length > 0);
+        
+        if (registeredStudents.length === 0) {
+            return res.json({ matchedStudentIds: [], detectedFaces: 0, msg: 'No students have HD Face registered.' });
+        }
+
+        // Prepare image for Python API
+        const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
+        const buffer = Buffer.from(base64Data, 'base64');
+        const form = new FormData();
+        form.append('image', buffer, { filename: 'query.jpg', contentType: 'image/jpeg' });
+
+        // Call Python API
+        const pythonResponse = await axios.post(`${PYTHON_API_URL}/api/extract`, form, {
+            headers: { ...form.getHeaders() }
+        });
+
+        if (pythonResponse.data.status !== 'success' || !pythonResponse.data.faces) {
+            return res.json({ matchedStudentIds: [], detectedFaces: 0 });
+        }
+
+        const detectedFaces = pythonResponse.data.faces;
+        const matchedStudentIds = [];
+
+            // For each detected face, find the best matching student
+            for (const face of detectedFaces) {
+                let bestMatch = null;
+                let highestSimilarity = -1;
+
+                for (const student of registeredStudents) {
+                    const similarity = cosineSimilarity(face.embedding, student.deepfaceDescriptor);
+                    if (similarity > highestSimilarity) {
+                        highestSimilarity = similarity;
+                        bestMatch = student._id.toString();
+                    }
+                }
+
+                console.log(`[recognize-photo] Evaluated a face. Best match score: ${highestSimilarity}`);
+                
+                // ArcFace Cosine Similarity Threshold: 0.25 is appropriate for distant crowd photos 
+                // (Matches are usually > 0.29, while non-matches hover around 0.10 to 0.18)
+                if (highestSimilarity > 0.25 && bestMatch) {
+                    matchedStudentIds.push(bestMatch);
+                }
+            }
+
+        res.json({ 
+            matchedStudentIds: [...new Set(matchedStudentIds)], // Return unique IDs
+            detectedFaces: detectedFaces.length 
+        });
+
+    } catch (err) {
+        console.error("Error recognizing photo:", err.message);
+        require('fs').appendFileSync('error.log', err.stack + '\n');
+        res.status(500).send('Face recognition failed');
     }
 });
 
@@ -791,58 +911,6 @@ router.get('/:classCode/attendance', auth, async (req, res) => {
     }
 });
 
-// @route   GET /api/classes/me/attendance-history
-// @desc    Get complete attendance history for student across all classes
-// @access  Private
-router.get('/me/attendance-history', auth, async (req, res) => {
-    if (req.user.role !== 'student') return res.status(403).json({ msg: 'Access denied' });
-
-    try {
-        const studentId = new mongoose.Types.ObjectId(req.user.id);
-        const classes = await Class.find({ students: req.user.id });
-        const classIds = classes.map(c => c._id);
-
-        const history = await Attendance.aggregate([
-            { $match: { classId: { $in: classIds } } },
-            {
-                $lookup: {
-                    from: 'classes',
-                    localField: 'classId',
-                    foreignField: '_id',
-                    as: 'classInfo'
-                }
-            },
-            { $unwind: '$classInfo' },
-            {
-                $project: {
-                    date: 1,
-                    className: '$classInfo.name',
-                    classCode: '$classInfo.code',
-                    records: {
-                        $filter: {
-                            input: '$records',
-                            as: 'record',
-                            cond: { $eq: ['$$record.student', studentId] }
-                        }
-                    }
-                }
-            },
-            { $sort: { date: -1 } }
-        ]);
-
-        const formattedHistory = history.map(h => ({
-            date: h.date,
-            className: h.className,
-            classCode: h.classCode,
-            status: h.records && h.records.length > 0 && h.records[0].status === 'present' ? 'Present' : 'Absent'
-        }));
-
-        res.json(formattedHistory);
-    } catch (err) {
-        console.error("Error fetching attendance history for student", err);
-        res.status(500).send('Server Error');
-    }
-});
 
 // @route   POST /api/classes/:classCode/announcements
 router.post('/:classCode/announcements', auth, async (req, res) => {
